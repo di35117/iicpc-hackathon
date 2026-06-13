@@ -1,0 +1,114 @@
+version: '3.8'
+
+# IICPC Platform - Local Development Stack
+# Runs all infrastructure services locally.
+# Contestant sandbox containers are spawned separately by the upload-api service.
+
+services:
+
+  # Redpanda: Kafka-compatible message bus. Single binary, no ZooKeeper.
+  # All telemetry events flow through here between bot-fleet and telemetry-ingester.
+  redpanda:
+    image: redpandadata/redpanda:latest
+    container_name: redpanda
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=512M
+      - --overprovisioned
+      - --kafka-addr=PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+      - --pandaproxy-addr=0.0.0.0:8082
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+      - "8082:8082"
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redpanda Console: web UI for inspecting topics during development.
+  redpanda-console:
+    image: redpandadata/console:latest
+    container_name: redpanda-console
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  # TimescaleDB: PostgreSQL with time-series extension.
+  # Stores historical latency/throughput samples for post-run analytics.
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: timescaledb
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform_secret
+      POSTGRES_DB: metrics
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./init/timescale-init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis: sorted sets for live leaderboard, pub/sub for broadcasting score updates.
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MinIO: S3-compatible local object store for contestant source uploads.
+  # Replaced by real AWS S3 in the Terraform deployment.
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: platform
+      MINIO_ROOT_PASSWORD: platform_secret_2024
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  default:
+    name: platform_internal
+  sandbox_net:
+    name: sandbox_isolated
+    driver: bridge
+    internal: true
+
+volumes:
+  redpanda_data:
+  timescale_data:
+  redis_data:
+  minio_data:

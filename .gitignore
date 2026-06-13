@@ -1,0 +1,43 @@
+# Go binaries and build output
+/bin/
+*.exe
+*.out
+
+# Go test cache
+*.test
+*.prof
+/vendor/
+
+# Environment files — never commit secrets
+.env
+.env.*
+*.local
+
+# AWS credentials — these live in ~/.aws/ not here, but just in case
+.aws/
+credentials
+
+# Docker volumes and local data
+deployments/data/
+*.tar
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Frontend build output
+frontend/dist/
+frontend/node_modules/
+
+# Terraform state — contains sensitive infra details
+deployments/terraform/.terraform/
+deployments/terraform/*.tfstate
+deployments/terraform/*.tfstate.backup
+deployments/terraform/*.tfvars
+.terraform.lock.hcl
