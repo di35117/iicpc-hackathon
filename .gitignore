@@ -41,3 +41,4 @@ deployments/terraform/*.tfstate
 deployments/terraform/*.tfstate.backup
 deployments/terraform/*.tfvars
 .terraform.lock.hcl
+.bot-fleet

@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -64,7 +65,6 @@ type RunJob struct {
 func main() {
 	cfg := loadConfig()
 
-	// Initialize Redpanda Client
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(cfg.RedpandaAddr),
 	)
@@ -120,21 +120,23 @@ func runFleet(job RunJob, cl *kgo.Client) {
 
 	eventCh := make(chan TelemetryEvent, job.BotCount*10)
 
-	// Pass the Redpanda client to the drainer
+	// Keep the drainer alive to process events
 	go drainEvents(ctx, eventCh, cl, &totalOrders, &totalAcks)
 
-	done := make(chan struct{})
+	var wg sync.WaitGroup // Added WaitGroup to track running bots
+
 	for i := 0; i < job.BotCount; i++ {
+		wg.Add(1) // Increment counter for each bot
 		go func(botID int) {
+			defer wg.Done() // Decrement counter when the bot gracefully exits
 			runBot(ctx, botID, job, eventCh)
 		}(i)
 	}
 
-	<-ctx.Done()
-	close(eventCh)
-	<-done
+	<-ctx.Done()   // 1. Wait for the 10-second timer to expire
+	wg.Wait()      // 2. Wait for EVERY bot to finish their final write
+	close(eventCh) // 3. NOW it is 100% safe to close the channel
 
-	// Ensure all messages are flushed to Redpanda before exiting the run
 	cl.Flush(context.Background())
 	log.Printf("[run %s] complete — sent=%d acked=%d", job.RunID, totalOrders.Load(), totalAcks.Load())
 }
@@ -153,7 +155,7 @@ func runBot(ctx context.Context, botID int, job RunJob, eventCh chan<- Telemetry
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return // The bot sees the timer is up and exits cleanly
 		default:
 		}
 
