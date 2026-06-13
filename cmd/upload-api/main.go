@@ -1,9 +1,3 @@
-// upload-api: REST API for contestant code submissions.
-//
-// POST /submit        — receives source tarball, stores in MinIO, triggers build
-// POST /run/{id}      — spawns sandbox container, notifies bot-fleet to begin test
-// GET  /runs/{run_id} — returns live scores and run status
-
 package main
 
 import (
@@ -16,27 +10,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/victus/iicpc-platform/internal/sandbox"
 )
 
 type Config struct {
 	Port          string
-	MinIOEndpoint string
-	MinIOUser     string
-	MinIOPassword string
-	MinIOBucket   string
-	DockerHost    string
 	RedpandaAddr  string
 }
 
 func loadConfig() Config {
 	return Config{
-		Port:          getEnv("PORT", "8081"),
-		MinIOEndpoint: getEnv("MINIO_ENDPOINT", "localhost:9000"),
-		MinIOUser:     getEnv("MINIO_USER", "platform"),
-		MinIOPassword: getEnv("MINIO_PASSWORD", "platform_secret_2024"),
-		MinIOBucket:   getEnv("MINIO_BUCKET", "submissions"),
-		DockerHost:    getEnv("DOCKER_HOST", "unix:///var/run/docker.sock"),
-		RedpandaAddr:  getEnv("REDPANDA_ADDR", "localhost:9092"),
+		Port:         getEnv("PORT", "8081"),
+		RedpandaAddr: getEnv("REDPANDA_ADDR", "localhost:9092"),
 	}
 }
 
@@ -50,8 +35,7 @@ type RunResponse struct {
 	RunID        string    `json:"run_id"`
 	SubmissionID string    `json:"submission_id"`
 	StartedAt    time.Time `json:"started_at"`
-	BotCount     int       `json:"bot_count"`
-	DurationSecs int       `json:"duration_secs"`
+	TargetURL    string    `json:"target_url"`
 }
 
 func main() {
@@ -60,7 +44,6 @@ func main() {
 
 	mux.HandleFunc("POST /submit", handleSubmit(cfg))
 	mux.HandleFunc("POST /run/{id}", handleRun(cfg))
-	mux.HandleFunc("GET /runs/{run_id}", handleRunStatus(cfg))
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "ok")
@@ -79,6 +62,7 @@ func handleSubmit(cfg Config) http.HandlerFunc {
 			http.Error(w, "request too large or malformed", http.StatusBadRequest)
 			return
 		}
+		
 		file, header, err := r.FormFile("source")
 		if err != nil {
 			http.Error(w, "missing source file field", http.StatusBadRequest)
@@ -89,16 +73,20 @@ func handleSubmit(cfg Config) http.HandlerFunc {
 		submissionID := uuid.New().String()
 		log.Printf("submission %s: %s (%d bytes)", submissionID, header.Filename, header.Size)
 
-		// TODO Day 3: stream to MinIO, trigger sandboxed build pipeline.
-		_ = file
-		_ = cfg
+		// Synchronous build for the hackathon prototype.
+		buildRes, err := sandbox.Build(submissionID, file)
+		if err != nil || !buildRes.Success {
+			log.Printf("build failed for %s: %v\nLogs: %s", submissionID, err, buildRes.Logs)
+			http.Error(w, "build failed", http.StatusInternalServerError)
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(SubmitResponse{
 			SubmissionID: submissionID,
-			Status:       "building",
-			Message:      "source uploaded, build pipeline starting",
+			Status:       "ready",
+			Message:      "source uploaded and built successfully",
 		})
 	}
 }
@@ -110,11 +98,25 @@ func handleRun(cfg Config) http.HandlerFunc {
 			http.Error(w, "missing submission id", http.StatusBadRequest)
 			return
 		}
+		
 		runID := uuid.New().String()
+		imageName := fmt.Sprintf("iicpc-submission-%s:latest", submissionID)
 
-		// TODO Day 3: pull image, spawn sandbox, publish run_started to Redpanda.
-		_ = cfg
-		_ = context.Background()
+		// Start the sandboxed container
+		handle, err := sandbox.Start(context.Background(), sandbox.SandboxConfig{
+			ImageName:    imageName,
+			SubmissionID: submissionID,
+			ExposedPort:  "8080", 
+		})
+		
+		if err != nil {
+			log.Printf("sandbox start failed for %s: %v", submissionID, err)
+			http.Error(w, "failed to start sandbox container", http.StatusInternalServerError)
+			return
+		}
+
+		targetWSURL := fmt.Sprintf("ws://%s/orders", handle.HostEndpoint)
+		log.Printf("run %s triggered for submission %s at %s", runID, submissionID, targetWSURL)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
@@ -122,21 +124,7 @@ func handleRun(cfg Config) http.HandlerFunc {
 			RunID:        runID,
 			SubmissionID: submissionID,
 			StartedAt:    time.Now().UTC(),
-			BotCount:     1000,
-			DurationSecs: 60,
-		})
-		log.Printf("run %s triggered for submission %s", runID, submissionID)
-	}
-}
-
-func handleRunStatus(cfg Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		runID := r.PathValue("run_id")
-		_ = cfg
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"run_id": runID,
-			"status": "stub — wire storage on Day 4",
+			TargetURL:    targetWSURL,
 		})
 	}
 }
