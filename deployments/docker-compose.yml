@@ -1,4 +1,3 @@
-version: '3.8'
 
 # IICPC Platform - Local Development Stack
 # Runs all infrastructure services locally.
