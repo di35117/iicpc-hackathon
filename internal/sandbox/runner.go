@@ -116,8 +116,12 @@ func Start(ctx context.Context, cfg SandboxConfig) (*SandboxHandle, error) {
 
 	hostPort, err := resolveHostPort(ctx, containerID, cfg.ExposedPort)
 	if err != nil {
+		// INJECTION: Fetch the container logs before we delete the evidence!
+		containerLogs, _ := exec.Command("docker", "logs", containerID).CombinedOutput()
+		
 		_ = Stop(context.Background(), containerID)
-		return nil, fmt.Errorf("resolve host port: %w", err)
+		
+		return nil, fmt.Errorf("resolve port: %w\n--- CONTAINER LOGS ---\n%s", err, string(containerLogs))
 	}
 
 	return &SandboxHandle{
