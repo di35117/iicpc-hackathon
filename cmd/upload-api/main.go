@@ -119,15 +119,23 @@ func handleSubmit(cfg Config) http.HandlerFunc {
 			})
 			return
 		}
-		// ------------------------------
-
 		submissionID := uuid.New().String()
 		log.Printf("submission %s: %s (%d bytes)", submissionID, header.Filename, header.Size)
 
-		buildRes, err := sandbox.Build(submissionID, file)
-		if err != nil || !buildRes.Success {
-			log.Printf("build failed for %s: %v\nLogs: %s", submissionID, err, buildRes.Logs)
-			http.Error(w, "build failed", http.StatusInternalServerError)
+		// 1. Pass header.Filename to the builder so it knows what to do
+		buildRes, err := sandbox.Build(submissionID, header.Filename, file)
+		
+		// 2. SAFE ERROR HANDLING: Check the pipeline error first
+		if err != nil {
+			log.Printf("build pipeline failed for %s: %v", submissionID, err)
+			http.Error(w, "sandbox pipeline error", http.StatusInternalServerError)
+			return
+		}
+		
+		// 3. SAFE COMPILATION CHECK: Only check success if buildRes is NOT nil
+		if !buildRes.Success {
+			log.Printf("compilation failed for %s:\n%s", submissionID, buildRes.Logs)
+			http.Error(w, "compilation failed", http.StatusBadRequest)
 			return
 		}
 
