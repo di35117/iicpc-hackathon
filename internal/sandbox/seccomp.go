@@ -59,6 +59,7 @@ func defaultSeccompProfile() string {
 					// File operations
 					"openat", "unlink", "unlinkat", "mkdir", "mkdirat",
 					"rename", "renameat", "getcwd", "chdir", "readlink", "readlinkat",
+					"getdents", "getdents64", "close_range",
 					// Networking (TCP only — no raw sockets)
 					"socket", "connect", "accept", "accept4", "bind", "listen",
 					"getsockname", "getpeername", "sendto", "recvfrom",
