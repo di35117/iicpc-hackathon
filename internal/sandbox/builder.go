@@ -165,14 +165,14 @@ RUN if [ -f "CMakeLists.txt" ]; then \
     elif [ -f "Makefile" ]; then \
       make && find . -maxdepth 1 -type f -perm -111 -exec cp {} /server \; ; \
     else \
-      g++ -O3 *.cpp *.cc *.c -o /server 2>/dev/null || \
-      g++ -O3 *.cpp -o /server 2>/dev/null || \
-      g++ -O3 *.c -o /server ; \
+      g++ -O3 -static *.cpp *.cc *.c -o /server 2>/dev/null || \
+      g++ -O3 -static *.cpp -o /server 2>/dev/null || \
+      g++ -O3 -static *.c -o /server ; \
     fi
 
 FROM alpine:3.19
-# C++ binaries often require standard library bindings
-RUN apk add --no-cache libstdc++ libgcc && adduser -D nonroot
+# Completely offline stage. No apk add needed because the binary is static.
+RUN adduser -D nonroot
 USER nonroot
 COPY --from=builder /server /server
 EXPOSE 8080
