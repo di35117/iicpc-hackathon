@@ -49,7 +49,7 @@ func defaultSeccompProfile() string {
 					"getuid", "geteuid", "getgid", "getegid",
 					// Process and memory management
 					"read", "write", "open", "close", "stat", "fstat",
-					"statfs", "fstatfs", 
+					"statfs", "fstatfs","statx", 
 					"lstat",
 					"mmap", "mprotect", "munmap", "brk", "mremap", "madvise",
 					"poll", "lseek", "pread64", "pwrite64", "readv", "writev",
