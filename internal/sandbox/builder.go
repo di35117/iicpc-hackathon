@@ -160,12 +160,12 @@ RUN if [ -f "CMakeLists.txt" ]; then \
     elif [ -f "Makefile" ]; then \
       make && find . -maxdepth 1 -type f -perm -111 -exec cp {} /server \; ; \
     else \
-      g++ -O3 -static *.cpp *.cc *.c -o /server 2>/dev/null || \
+      g++ -O3 *.cpp *.cc *.c -o /server 2>/dev/null || \
       g++ -O3 *.cpp -o /server 2>/dev/null || \
       g++ -O3 *.c -o /server ; \
     fi
 
-FROM gcr.io/distroless/static:nonroot
+FROM gcr.io/distroless/cc:nonroot
 COPY --from=builder /server /server
 EXPOSE 8080
 ENTRYPOINT ["/server"]
