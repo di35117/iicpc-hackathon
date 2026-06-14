@@ -1,0 +1,168 @@
+---
+# 1. Namespace Definition
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: iicpc-platform
+---
+# 2. Upload API & Sandbox Orchestrator
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upload-api
+  namespace: iicpc-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: upload-api
+  template:
+    metadata:
+      labels:
+        app: upload-api
+    spec:
+      containers:
+      - name: upload-api
+        image: iicpc/upload-api:latest
+        ports:
+        - containerPort: 8081
+        env:
+        - name: REDPANDA_ADDR
+          value: "redpanda-0.redpanda.iicpc-platform.svc.cluster.local:9092"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: upload-api-svc
+  namespace: iicpc-platform
+spec:
+  type: LoadBalancer
+  selector:
+    app: upload-api
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8081
+---
+# 3. Telemetry Ingester (High Throughput Kafka Consumer)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telemetry-ingester
+  namespace: iicpc-platform
+spec:
+  replicas: 3 # Multiple consumers for the 6 Redpanda partitions
+  selector:
+    matchLabels:
+      app: telemetry-ingester
+  template:
+    metadata:
+      labels:
+        app: telemetry-ingester
+    spec:
+      containers:
+      - name: telemetry-ingester
+        image: iicpc/telemetry-ingester:latest
+        env:
+        - name: REDPANDA_ADDR
+          value: "redpanda-0.redpanda.iicpc-platform.svc.cluster.local:9092"
+        - name: DATABASE_URL
+          value: "postgres://platform:platform_secret@timescaledb-svc:5432/metrics"
+---
+# 4. Leaderboard API
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: leaderboard-api
+  namespace: iicpc-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: leaderboard-api
+  template:
+    metadata:
+      labels:
+        app: leaderboard-api
+    spec:
+      containers:
+      - name: leaderboard-api
+        image: iicpc/leaderboard:latest
+        ports:
+        - containerPort: 8084
+        env:
+        - name: DATABASE_URL
+          value: "postgres://platform:platform_secret@timescaledb-svc:5432/metrics"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: leaderboard-svc
+  namespace: iicpc-platform
+spec:
+  type: LoadBalancer
+  selector:
+    app: leaderboard-api
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8084
+---
+# 5. Distributed Bot Fleet (The Load Generator)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bot-fleet
+  namespace: iicpc-platform
+spec:
+  replicas: 5 # Initial baseline
+  selector:
+    matchLabels:
+      app: bot-fleet
+  template:
+    metadata:
+      labels:
+        app: bot-fleet
+    spec:
+      # Explicitly schedule this on the compute-optimized nodes
+      nodeSelector:
+        workload: "high-throughput-generator"
+      tolerations:
+      - key: "dedicated"
+        operator: "Equal"
+        value: "bot-fleet"
+        effect: "NoSchedule"
+      containers:
+      - name: bot-fleet
+        image: iicpc/bot-fleet:latest
+        resources:
+          requests:
+            cpu: "1"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            [cite_start]memory: "2Gi" # Enforcing strict sandboxing limits [cite: 17]
+        env:
+        - name: REDPANDA_ADDR
+          value: "redpanda-0.redpanda.iicpc-platform.svc.cluster.local:9092"
+---
+# 6. Horizontal Pod Autoscaler (Proving Horizontal Scale)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: bot-fleet-hpa
+  namespace: iicpc-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: bot-fleet
+  minReplicas: 5
+  maxReplicas: 50 # Allows massive scale-out during stress tests
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 80
