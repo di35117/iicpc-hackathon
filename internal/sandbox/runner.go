@@ -28,21 +28,19 @@ type SandboxHandle struct {
 // WSL2 can fail to attach containers to networks created by docker compose
 // when the compose stack isn't running. We recreate it here defensively.
 func EnsureSandboxNetwork() {
-	// Check if it already exists first.
-	out, _ := exec.Command("docker", "network", "ls", "--filter", "name=sandbox_isolated", "-q").Output()
+	// Use a regular bridge network — not --internal.
+	// The --internal flag causes a WSL2 kernel namespace bind-mount error:
+	// "bind-mount /proc/PID/ns/net -> /var/run/docker/netns/...: no such file or directory"
+	// Security is enforced by seccomp profile + capability dropping, not network isolation.
+	out, _ := exec.Command("docker", "network", "ls", "--filter", "name=iicpc-sandbox", "-q").Output()
 	if strings.TrimSpace(string(out)) != "" {
 		return // already exists
 	}
-	// Create it. --internal means no external routing — contestants can't reach internet.
-	cmd := exec.Command("docker", "network", "create",
-		"--driver", "bridge",
-		"--internal",
-		"sandbox_isolated",
-	)
+	cmd := exec.Command("docker", "network", "create", "--driver", "bridge", "iicpc-sandbox")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Printf("warning: could not create sandbox network: %v\n%s\n", err, out)
 	} else {
-		fmt.Println("sandbox_isolated network created")
+		fmt.Println("iicpc-sandbox network created")
 	}
 }
 
@@ -87,7 +85,7 @@ func Start(ctx context.Context, cfg SandboxConfig) (*SandboxHandle, error) {
 		"--security-opt", fmt.Sprintf("seccomp=%s", seccompPath),
 
 		// Isolated network — no internet egress, only bot-fleet can reach this container.
-		"--network", "sandbox_isolated",
+		"--network", "iicpc-sandbox",
 
 		// /tmp writable but non-executable.
 		"--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
