@@ -48,7 +48,8 @@ func defaultSeccompProfile() string {
 					"mmap", "mprotect", "munmap", "brk", "mremap", "madvise",
 					"poll", "lseek", "pread64", "pwrite64", "readv", "writev",
 					"access", "dup", "dup2", "dup3", "getpid", "getppid",
-					"exit", "exit_group", "wait4", "waitid",
+					"exit", "exit_group", "wait4", "waitid", 
+					"getrandom", // <-- ADDED: Needed for Go runtime to seed hash maps
 					// File operations
 					"openat", "unlink", "unlinkat", "mkdir", "mkdirat",
 					"rename", "renameat", "getcwd", "chdir", "readlink", "readlinkat",
