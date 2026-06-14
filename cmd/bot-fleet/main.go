@@ -67,12 +67,12 @@ func main() {
 
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(cfg.RedpandaAddr),
+		kgo.AllowAutoTopicCreation(),
 	)
 	if err != nil {
 		log.Fatalf("failed to connect to redpanda: %v", err)
 	}
 	defer cl.Close()
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /run", handleDirectRun(cfg, cl))
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
