@@ -111,9 +111,10 @@ func main() {
 						
 						// Log violation to database to impact final score
 						dbPool.Exec(ctx, `
-							INSERT INTO correctness_violations (run_id, violation_type, details) 
-							VALUES ($1, 'FIFO_SKIP', $2)
-						`, evt.RunID, "Acked newer order before older order at same price level")
+							INSERT INTO correctness_violations 
+							(time, submission_id, run_id, order_id, expected_fill, actual_fill, violation_type)
+							VALUES (NOW(), $1, $2, $3, $4, $5, 'FIFO_SKIP')
+						`, evt.SubmissionID, evt.RunID, evt.OrderID, oldestOrderID, evt.OrderID)
 					}
 
 					// Remove the order from our tracking queue
