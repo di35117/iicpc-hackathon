@@ -86,65 +86,45 @@ func main() {
 
 func handleSubmit(cfg Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
-		if err := r.ParseMultipartForm(50 << 20); err != nil {
-			http.Error(w, "request too large or malformed", http.StatusBadRequest)
-			return
-		}
-
+		r.ParseMultipartForm(50 << 20)
 		file, header, err := r.FormFile("source")
 		if err != nil {
-			http.Error(w, "missing source file field", http.StatusBadRequest)
+			http.Error(w, "missing source file", http.StatusBadRequest)
 			return
 		}
 		defer file.Close()
 
-		// --- STRICT FILE VALIDATION ---
+		// Validate extension
 		ext := strings.ToLower(filepath.Ext(header.Filename))
-		if strings.HasSuffix(strings.ToLower(header.Filename), ".tar.gz") {
-			ext = ".tar.gz"
-		}
-
-		allowedExts := map[string]bool{
-			".cpp": true, ".rs": true, ".go": true, ".c": true, ".zip": true, ".tar.gz": true,
-		}
-
-		if !allowedExts[ext] {
-			log.Printf("SECURITY REJECT: Invalid file type %s", header.Filename)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnsupportedMediaType)
-			json.NewEncoder(w).Encode(SubmitResponse{
-				Status:  "error",
-				Message: "Security Violation: Only C++, Rust, Go source or archives (.zip, .tar.gz) allowed.",
-			})
+		if !strings.Contains(".cpp.rs.go.c.zip.tar.gz.tar", ext) {
+			http.Error(w, "invalid file type", http.StatusUnsupportedMediaType)
 			return
 		}
-		submissionID := uuid.New().String()
-		log.Printf("submission %s: %s (%d bytes)", submissionID, header.Filename, header.Size)
 
-		// 1. Pass header.Filename to the builder so it knows what to do
+		submissionID := uuid.New().String()
+		
+		// CALL THE FIX: Pass header.Filename here
 		buildRes, err := sandbox.Build(submissionID, header.Filename, file)
 		
-		// 2. SAFE ERROR HANDLING: Check the pipeline error first
+		// 1. Pipeline error handling (no nil pointer risk)
 		if err != nil {
-			log.Printf("build pipeline failed for %s: %v", submissionID, err)
-			http.Error(w, "sandbox pipeline error", http.StatusInternalServerError)
+			log.Printf("Pipeline failed for %s: %v", submissionID, err)
+			http.Error(w, "internal pipeline error", http.StatusInternalServerError)
 			return
 		}
 		
-		// 3. SAFE COMPILATION CHECK: Only check success if buildRes is NOT nil
+		// 2. Compilation check
 		if !buildRes.Success {
-			log.Printf("compilation failed for %s:\n%s", submissionID, buildRes.Logs)
-			http.Error(w, "compilation failed", http.StatusBadRequest)
+			log.Printf("Compilation failed for %s:\n%s", submissionID, buildRes.Logs)
+			http.Error(w, "build failed: " + buildRes.Logs, http.StatusBadRequest)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(SubmitResponse{
 			SubmissionID: submissionID,
 			Status:       "ready",
-			Message:      "source uploaded and built successfully",
+			Message:      "Successfully built and sandboxed",
 		})
 	}
 }
