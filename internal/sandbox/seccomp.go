@@ -43,8 +43,14 @@ func defaultSeccompProfile() string {
 				// Allow the standard set of syscalls a normal server process needs.
 				Action: "SCMP_ACT_ALLOW",
 				Names: []string{
+					"access", "dup", "dup2", "dup3", "getpid", "getppid",
+					"exit", "exit_group", "wait4", "waitid", 
+					"getrandom", "execve", "execveat", 
+					"getuid", "geteuid", "getgid", "getegid",
 					// Process and memory management
-					"read", "write", "open", "close", "stat", "fstat", "lstat",
+					"read", "write", "open", "close", "stat", "fstat",
+					"statfs", "fstatfs", 
+					"lstat",
 					"mmap", "mprotect", "munmap", "brk", "mremap", "madvise",
 					"poll", "lseek", "pread64", "pwrite64", "readv", "writev",
 					"access", "dup", "dup2", "dup3", "getpid", "getppid",

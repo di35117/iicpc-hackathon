@@ -124,10 +124,10 @@ RUN if [ ! -f go.mod ]; then go mod init submission; fi
 RUN CGO_ENABLED=0 go build -o /server ./...
 
 FROM alpine:3.19
-# We don't need root privileges to run the server
 RUN adduser -D nonroot
 USER nonroot
-COPY --from=builder /server /server
+# Force ownership to the unprivileged user
+COPY --from=builder --chown=nonroot:nonroot /server /server
 EXPOSE 8080
 ENTRYPOINT ["/server"]
 `)

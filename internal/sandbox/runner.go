@@ -100,9 +100,13 @@ func Start(ctx context.Context, cfg SandboxConfig) (*SandboxHandle, error) {
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		// Clean up the half-created container before returning the error.
+		// INJECTION: Fetch the container logs before we delete the evidence!
+		containerLogs, _ := exec.Command("docker", "logs", containerName).CombinedOutput()
+		
+		// Clean up the failed container
 		exec.Command("docker", "rm", "-f", containerName).Run()
-		return nil, fmt.Errorf("docker run failed: %w\noutput: %s", err, string(out))
+		
+		return nil, fmt.Errorf("docker run failed: %w\noutput: %s\n--- CONTAINER LOGS ---\n%s", err, string(out), string(containerLogs))
 	}
 
 	containerID := strings.TrimSpace(string(out))
