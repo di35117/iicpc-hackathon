@@ -1,5 +1,3 @@
-// sandbox/runner.go: deploys the sandboxed container with strict isolation.
-
 package sandbox
 
 import (
@@ -10,6 +8,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type SandboxConfig struct {
@@ -24,43 +24,77 @@ type SandboxHandle struct {
 	HostEndpoint string
 }
 
+// EnsureSandboxNetwork creates the isolated network if it doesn't exist.
+// WSL2 can fail to attach containers to networks created by docker compose
+// when the compose stack isn't running. We recreate it here defensively.
+func EnsureSandboxNetwork() {
+	// Check if it already exists first.
+	out, _ := exec.Command("docker", "network", "ls", "--filter", "name=sandbox_isolated", "-q").Output()
+	if strings.TrimSpace(string(out)) != "" {
+		return // already exists
+	}
+	// Create it. --internal means no external routing — contestants can't reach internet.
+	cmd := exec.Command("docker", "network", "create",
+		"--driver", "bridge",
+		"--internal",
+		"sandbox_isolated",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Printf("warning: could not create sandbox network: %v\n%s\n", err, out)
+	} else {
+		fmt.Println("sandbox_isolated network created")
+	}
+}
+
+// cleanupStaleContainer removes any leftover container with this name from
+// a previous failed run so we don't hit the "name already in use" conflict.
+func cleanupStaleContainer(name string) {
+	// Force-remove regardless of running state. Silently ignore errors
+	// (the container may not exist — that's fine).
+	exec.Command("docker", "rm", "-f", name).Run()
+}
+
 func Start(ctx context.Context, cfg SandboxConfig) (*SandboxHandle, error) {
-	containerName := fmt.Sprintf("sandbox-%s", cfg.SubmissionID[:8])
+	// Ensure the isolated network exists before attaching a container to it.
+	EnsureSandboxNetwork()
 
-	// --- THE SECCOMP INJECTION (Option B: Maximum Flex) ---
-	// 1. Get the custom JSON profile from seccomp.go
-	seccompJSON := defaultSeccompProfile()
+	// Include a short UUID suffix so concurrent runs of the same submission
+	// don't collide on the container name.
+	containerName := fmt.Sprintf("sandbox-%s-%s", cfg.SubmissionID[:8], uuid.New().String()[:8])
 
-	// 2. Write it to a temporary file on the host machine
-	tmpFile, err := os.CreateTemp("", fmt.Sprintf("seccomp-%s-*.json", cfg.SubmissionID[:8]))
+	// Remove any stale container from a previous failed attempt with the same prefix.
+	cleanupStaleContainer(fmt.Sprintf("sandbox-%s", cfg.SubmissionID[:8]))
+
+	seccompPath, cleanup, err := writeSeccompProfile()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create seccomp temp file: %w", err)
+		return nil, fmt.Errorf("write seccomp profile: %w", err)
 	}
-	
-	// 3. Ensure the temp file is deleted from the host the moment this function returns.
-	// The Docker CLI reads this file client-side during the 'docker run' command, 
-	// so it is perfectly safe to delete it immediately after the command executes.
-	defer os.Remove(tmpFile.Name())
-
-	if _, err := tmpFile.WriteString(seccompJSON); err != nil {
-		return nil, fmt.Errorf("failed to write seccomp profile: %w", err)
-	}
-	tmpFile.Close() // Close it so the Docker CLI can read it
-	// ------------------------------------------------------
+	defer cleanup()
 
 	args := []string{
 		"run", "-d",
 		"--name", containerName,
+
+		// Resource limits — 2 CPUs and 512MB hard cap per contestant.
 		"--memory", "512m",
 		"--memory-swap", "512m",
 		"--cpus", "2",
+
+		// Security hardening — zero capabilities, read-only FS, no privilege escalation.
 		"--read-only",
 		"--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges:true",
-		"--security-opt", fmt.Sprintf("seccomp=%s", tmpFile.Name()), // Injecting the custom kernel filter
+		"--security-opt", fmt.Sprintf("seccomp=%s", seccompPath),
+
+		// Isolated network — no internet egress, only bot-fleet can reach this container.
 		"--network", "sandbox_isolated",
+
+		// /tmp writable but non-executable.
 		"--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
+
+		// Publish contestant port to a random available host port.
 		"-p", fmt.Sprintf("0:%s", cfg.ExposedPort),
+
 		"-e", fmt.Sprintf("SUBMISSION_ID=%s", cfg.SubmissionID),
 		cfg.ImageName,
 	}
@@ -68,18 +102,20 @@ func Start(ctx context.Context, cfg SandboxConfig) (*SandboxHandle, error) {
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		// Clean up the half-created container before returning the error.
+		exec.Command("docker", "rm", "-f", containerName).Run()
 		return nil, fmt.Errorf("docker run failed: %w\noutput: %s", err, string(out))
 	}
 
 	containerID := strings.TrimSpace(string(out))
-	
-	// Give the server a moment to boot before resolving ports
+
+	// Give the server 2s to boot before probing the port.
 	time.Sleep(2 * time.Second)
 
 	hostPort, err := resolveHostPort(ctx, containerID, cfg.ExposedPort)
 	if err != nil {
 		_ = Stop(context.Background(), containerID)
-		return nil, fmt.Errorf("resolve port: %w", err)
+		return nil, fmt.Errorf("resolve host port: %w", err)
 	}
 
 	return &SandboxHandle{
@@ -136,6 +172,20 @@ func resolveHostPort(ctx context.Context, containerID, containerPort string) (st
 	if len(bindings) == 0 {
 		return "", fmt.Errorf("no host binding for port %s", containerPort)
 	}
-
 	return bindings[0].HostPort, nil
+}
+
+func writeSeccompProfile() (path string, cleanup func(), err error) {
+	profile := defaultSeccompProfile()
+	f, err := os.CreateTemp("", "iicpc-seccomp-*.json")
+	if err != nil {
+		return "", nil, err
+	}
+	if _, err := f.WriteString(profile); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", nil, err
+	}
+	f.Close()
+	return f.Name(), func() { os.Remove(f.Name()) }, nil
 }
