@@ -73,10 +73,10 @@ func main() {
 
 	mux.HandleFunc("POST /submit", corsMiddleware(handleSubmit(cfg)))
 	mux.HandleFunc("POST /run/{id}", corsMiddleware(handleRun(cfg)))
-	mux.HandleFunc("GET /health", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /health", corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "ok")
-	}))
+	})))
 
 	log.Printf("upload-api orchestrator listening on :%s", cfg.Port)
 	if err := http.ListenAndServe(":"+cfg.Port, mux); err != nil {
