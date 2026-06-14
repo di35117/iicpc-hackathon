@@ -123,7 +123,10 @@ COPY . .
 RUN if [ ! -f go.mod ]; then go mod init submission; fi
 RUN CGO_ENABLED=0 go build -o /server ./...
 
-FROM gcr.io/distroless/static:nonroot
+FROM alpine:3.19
+# We don't need root privileges to run the server
+RUN adduser -D nonroot
+USER nonroot
 COPY --from=builder /server /server
 EXPOSE 8080
 ENTRYPOINT ["/server"]
@@ -142,7 +145,9 @@ RUN if [ -f "Cargo.toml" ]; then \
       rustc -C target-feature=+crt-static -O *.rs -o /server ; \
     fi
 
-FROM gcr.io/distroless/static:nonroot
+FROM alpine:3.19
+RUN adduser -D nonroot
+USER nonroot
 COPY --from=builder /server /server
 EXPOSE 8080
 ENTRYPOINT ["/server"]
@@ -165,7 +170,10 @@ RUN if [ -f "CMakeLists.txt" ]; then \
       g++ -O3 *.c -o /server ; \
     fi
 
-FROM gcr.io/distroless/cc:nonroot
+FROM alpine:3.19
+# C++ binaries often require standard library bindings
+RUN apk add --no-cache libstdc++ libgcc && adduser -D nonroot
+USER nonroot
 COPY --from=builder /server /server
 EXPOSE 8080
 ENTRYPOINT ["/server"]
