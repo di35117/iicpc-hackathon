@@ -1,9 +1,12 @@
+// sandbox/runner.go: deploys the sandboxed container with strict isolation.
+
 package sandbox
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -24,8 +27,27 @@ type SandboxHandle struct {
 func Start(ctx context.Context, cfg SandboxConfig) (*SandboxHandle, error) {
 	containerName := fmt.Sprintf("sandbox-%s", cfg.SubmissionID[:8])
 
-	// Removed the custom seccomp profile. Docker's default seccomp profile 
-	// is automatically applied and works perfectly alongside cap-drop.
+	// --- THE SECCOMP INJECTION (Option B: Maximum Flex) ---
+	// 1. Get the custom JSON profile from seccomp.go
+	seccompJSON := defaultSeccompProfile()
+
+	// 2. Write it to a temporary file on the host machine
+	tmpFile, err := os.CreateTemp("", fmt.Sprintf("seccomp-%s-*.json", cfg.SubmissionID[:8]))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create seccomp temp file: %w", err)
+	}
+	
+	// 3. Ensure the temp file is deleted from the host the moment this function returns.
+	// The Docker CLI reads this file client-side during the 'docker run' command, 
+	// so it is perfectly safe to delete it immediately after the command executes.
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString(seccompJSON); err != nil {
+		return nil, fmt.Errorf("failed to write seccomp profile: %w", err)
+	}
+	tmpFile.Close() // Close it so the Docker CLI can read it
+	// ------------------------------------------------------
+
 	args := []string{
 		"run", "-d",
 		"--name", containerName,
@@ -35,6 +57,7 @@ func Start(ctx context.Context, cfg SandboxConfig) (*SandboxHandle, error) {
 		"--read-only",
 		"--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges:true",
+		"--security-opt", fmt.Sprintf("seccomp=%s", tmpFile.Name()), // Injecting the custom kernel filter
 		"--network", "sandbox_isolated",
 		"--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
 		"-p", fmt.Sprintf("0:%s", cfg.ExposedPort),
