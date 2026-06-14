@@ -149,8 +149,7 @@ ENTRYPOINT ["/server"]
 
 func cppDockerfile() string {
 	return strings.TrimSpace(`
-FROM alpine:latest AS builder
-RUN apk add --no-cache g++ cmake make
+FROM iicpc-builder-cpp:latest AS builder
 WORKDIR /src
 COPY . .
 RUN if [ -f "CMakeLists.txt" ]; then \
