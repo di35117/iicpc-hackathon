@@ -141,7 +141,7 @@ spec:
             memory: "1Gi"
           limits:
             cpu: "2"
-            [cite_start]memory: "2Gi" # Enforcing strict sandboxing limits [cite: 17]
+            [cite_start]memory: "2Gi" # Enforcing strict sandboxing limits 
         env:
         - name: REDPANDA_ADDR
           value: "redpanda-0.redpanda.iicpc-platform.svc.cluster.local:9092"
